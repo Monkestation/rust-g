@@ -101,6 +101,7 @@ default = [
     "sql",
     "time",
     "toml",
+    "poissonnoise",
     "url",
 ]
 
