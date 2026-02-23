@@ -4,13 +4,13 @@ use dmi::{
     icon::{Icon, Looping},
 };
 use image::Rgba;
-use png::{text_metadata::ZTXtChunk, Decoder, Encoder, OutputInfo, Reader};
-use qrcode::{render::svg, QrCode};
+use png::{Decoder, Encoder, OutputInfo, Reader, text_metadata::ZTXtChunk};
+use qrcode::{QrCode, render::svg};
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use std::{
     fmt::Write,
-    fs::{create_dir_all, File},
+    fs::{File, create_dir_all},
     io::BufReader,
     num::NonZeroU32,
     path::Path,
@@ -116,10 +116,10 @@ fn create_png(path: &str, width: &str, height: &str, data: &str) -> Result<()> {
         }
     }
 
-    if let Some(fdir) = Path::new(path).parent() {
-        if !fdir.is_dir() {
-            create_dir_all(fdir)?;
-        }
+    if let Some(fdir) = Path::new(path).parent()
+        && !fdir.is_dir()
+    {
+        create_dir_all(fdir)?;
     }
 
     let mut encoder = Encoder::new(File::create(path)?, width, height);

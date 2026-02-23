@@ -1,14 +1,32 @@
 use super::universal_icon::{UniversalIcon, UniversalIconData};
 use dashmap::DashMap;
 use dmi::{
-    dirs::{Dirs, ALL_DIRS, CARDINAL_DIRS},
-    icon::{dir_to_dmi_index, Icon, IconState},
+    dirs::{ALL_DIRS, CARDINAL_DIRS, Dirs},
+    icon::{Icon, IconState, dir_to_dmi_index},
 };
 use image::RgbaImage;
-use once_cell::sync::Lazy;
-use std::{fs::File, hash::BuildHasherDefault, io::BufReader, sync::Arc};
+use once_cell::sync::{Lazy, OnceCell};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{fs::File, hash::BuildHasherDefault, io::BufReader, path::PathBuf, sync::Arc};
 use tracy_full::zone;
 use twox_hash::XxHash64;
+
+pub static CACHE_ACTIVE: AtomicUsize = AtomicUsize::new(0);
+
+struct CacheGuard;
+
+impl CacheGuard {
+    fn new() -> Self {
+        CACHE_ACTIVE.fetch_add(1, Ordering::SeqCst);
+        CacheGuard
+    }
+}
+
+impl Drop for CacheGuard {
+    fn drop(&mut self) {
+        CACHE_ACTIVE.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 /// A cache of UniversalIcon to UniversalIconData. In order for something to exist in this cache, it must have had any transforms applied to the images.
 static ICON_STATES: Lazy<
@@ -20,6 +38,7 @@ static ICON_STATES_FLAT: Lazy<
 > = Lazy::new(|| DashMap::with_hasher(BuildHasherDefault::<XxHash64>::default()));
 
 pub fn image_cache_contains(icon: &UniversalIcon, flatten: bool) -> bool {
+    let _guard = CacheGuard::new();
     if flatten {
         ICON_STATES_FLAT.contains_key(icon)
     } else {
@@ -28,6 +47,7 @@ pub fn image_cache_contains(icon: &UniversalIcon, flatten: bool) -> bool {
 }
 
 pub fn image_cache_clear() {
+    let _guard = CacheGuard::new();
     ICON_STATES.clear();
     ICON_STATES_FLAT.clear();
 }
@@ -44,6 +64,7 @@ impl UniversalIcon {
         flatten: bool,
     ) -> Result<(Arc<UniversalIconData>, bool), String> {
         zone!("universal_icon_to_image_data");
+        let _guard = CacheGuard::new();
         if cached {
             zone!("check_image_cache");
             if let Some(entry) = if flatten {
@@ -54,7 +75,9 @@ impl UniversalIcon {
                 return Ok((entry.value().to_owned(), true));
             }
             if must_be_cached {
-                return Err(format!("Image was requested but does not exist in the cache. It's likely that the icon state doesn't exist: {self} - while generating '{sprite_name}'"));
+                return Err(format!(
+                    "Image was requested but does not exist in the cache. It's likely that the icon state doesn't exist: {self} - while generating '{sprite_name}'"
+                ));
             }
         }
         let dmi = filepath_to_dmi(&self.icon_file)?;
@@ -92,7 +115,8 @@ impl UniversalIcon {
                             || (state.dirs == 8 && !ALL_DIRS.contains(&dir))
                         {
                             return Err(format!(
-                                "Dir specified {dir} is not in the set of valid dirs ({} dirs) for icon_state \"{}\" for {sprite_name}", state.dirs, state.name
+                                "Dir specified {dir} is not in the set of valid dirs ({} dirs) for icon_state \"{}\" for {sprite_name}",
+                                state.dirs, state.name
                             ));
                         }
                         match dir_to_dmi_index(&dir) {
@@ -151,7 +175,9 @@ impl UniversalIcon {
                 {
                     Some(image) => images.push(image.clone()),
                     None => {
-                        return Err(format!("Somehow got out of bounds image for dir {dir_index} and frame {frame_offset} on {sprite_name}!"));
+                        return Err(format!(
+                            "Somehow got out of bounds image for dir {dir_index} and frame {frame_offset} on {sprite_name}!"
+                        ));
                     }
                 }
             }
@@ -181,6 +207,7 @@ pub fn cache_transformed_images(
     flatten: bool,
 ) {
     zone!("cache_transformed_images");
+    let _guard = CacheGuard::new();
     if flatten {
         ICON_STATES_FLAT.insert(uni_icon.to_owned(), image_data.to_owned());
     } else {
@@ -189,47 +216,44 @@ pub fn cache_transformed_images(
 }
 
 /* ---- DMI CACHING ---- */
+type IconMap = DashMap<String, OnceCell<Arc<Icon>>, BuildHasherDefault<XxHash64>>;
 
 /// A cache of DMI filepath -> Icon objects.
-static ICON_FILES: Lazy<DashMap<String, Arc<Icon>, BuildHasherDefault<XxHash64>>> =
+static ICON_FILES: Lazy<IconMap> =
     Lazy::new(|| DashMap::with_hasher(BuildHasherDefault::<XxHash64>::default()));
 
 pub fn icon_cache_clear() {
+    let _guard = CacheGuard::new();
     ICON_FILES.clear();
 }
+
+pub static ICON_ROOT: Lazy<PathBuf> = Lazy::new(|| std::env::current_dir().unwrap());
 
 /// Given a DMI filepath, returns a DMI Icon structure and caches it.
 pub fn filepath_to_dmi(icon_path: &str) -> Result<Arc<Icon>, String> {
     zone!("filepath_to_dmi");
-    {
-        zone!("check_dmi_exists");
-        if let Some(found) = ICON_FILES.get(icon_path) {
-            return Ok(found.clone());
-        }
-    }
-    let icon_file = match File::open(icon_path) {
-        Ok(icon_file) => icon_file,
-        Err(err) => {
-            return Err(format!("Failed to open DMI '{icon_path}' - {err}"));
-        }
-    };
-    let reader = BufReader::new(icon_file);
-    let dmi: Icon;
-    {
+
+    let full_path = ICON_ROOT.join(icon_path);
+
+    let cell = ICON_FILES.entry(icon_path.to_owned()).or_default();
+
+    cell.get_or_try_init(|| {
+        zone!("open_dmi_file");
+        let icon_file = File::open(&full_path).map_err(|err| {
+            format!(
+                "Failed to open DMI '{}' (resolved to '{}') - {}",
+                icon_path,
+                full_path.display(),
+                err
+            )
+        })?;
+
+        let reader = BufReader::new(icon_file);
+
         zone!("parse_dmi");
-        dmi = match Icon::load(reader) {
-            Ok(dmi) => dmi,
-            Err(err) => {
-                return Err(format!("DMI '{icon_path}' failed to parse - {err}"));
-            }
-        };
-    }
-    {
-        zone!("insert_dmi");
-        let dmi_arc = Arc::new(dmi);
-        let other_arc = dmi_arc.clone();
-        // Cache it for later, saving future DMI parsing operations, which are very slow.
-        ICON_FILES.insert(icon_path.to_owned(), dmi_arc);
-        Ok(other_arc)
-    }
+        Ok(Arc::new(Icon::load(reader).map_err(|err| {
+            format!("DMI '{icon_path}' failed to parse - {err}")
+        })?))
+    })
+    .cloned()
 }

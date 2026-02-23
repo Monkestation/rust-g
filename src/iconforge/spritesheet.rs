@@ -6,7 +6,7 @@ use super::{
 use crate::{
     error::Error,
     hash::{file_hash, string_hash},
-    iconforge::image_cache::cache_transformed_images,
+    iconforge::image_cache::{ICON_ROOT, cache_transformed_images},
 };
 use dashmap::{DashMap, DashSet};
 use dmi::icon::{DmiVersion, Icon, IconState};
@@ -19,6 +19,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs::File,
     hash::BuildHasherDefault,
+    path::PathBuf,
     sync::{Arc, Mutex, RwLock},
 };
 use tracy_full::zone;
@@ -42,10 +43,10 @@ pub struct HeadlessResult {
 
 fn headless_error(error: String, errors: Option<&Vec<String>>) -> HeadlessResult {
     let mut errors_out = error;
-    if let Some(error) = errors {
-        if !error.is_empty() {
-            errors_out = format!("{errors_out} \nAdditional errors: \n{}", error.join("\n"))
-        }
+    if let Some(error) = errors
+        && !error.is_empty()
+    {
+        errors_out = format!("{errors_out} \nAdditional errors: \n{}", error.join("\n"))
     }
     HeadlessResult {
         file_path: None,
@@ -72,9 +73,38 @@ struct SpritesheetEntry {
 
 pub fn generate_headless(file_path: &str, sprites: &str, flatten: &str) -> HeadlessResult {
     zone!("generate_headless");
+
+    if file_path.is_empty() {
+        return headless_error(
+            "Invalid file path: empty paths are not allowed".to_string(),
+            None,
+        );
+    }
+
+    if file_path.starts_with('/') || file_path.starts_with('\\') || file_path.contains(':') {
+        return headless_error(
+            format!("Invalid file path: absolute paths are not allowed. Received: '{file_path}'"),
+            None,
+        );
+    }
+
+    if file_path.contains("../") || file_path.contains("..\\") {
+        return headless_error(
+            format!(
+                "Invalid file path: parent directory traversal is not allowed. Received: '{file_path}'"
+            ),
+            None,
+        );
+    }
+
     let generate_dmi: bool = file_path.ends_with(".dmi");
     if !generate_dmi && !file_path.ends_with(".png") {
-        return headless_error(format!("Invalid file extension for headless icon. Must be '.dmi' or '.png'. Received file path: '{file_path}'"), None);
+        return headless_error(
+            format!(
+                "Invalid file extension for headless icon. Must be '.dmi' or '.png'. Received: '{file_path}'"
+            ),
+            None,
+        );
     }
     // PNGs cannot be non-flat
     let flatten: bool = !generate_dmi || flatten == "1";
@@ -82,7 +112,14 @@ pub fn generate_headless(file_path: &str, sprites: &str, flatten: &str) -> Headl
 
     let sprites_map = match serde_json::from_str::<IndexMap<String, UniversalIcon>>(sprites) {
         Ok(data) => data,
-        Err(err) => return headless_error(format!("Unable to parse headless sprite data provided for generation of '{file_path}': {err}"), None),
+        Err(err) => {
+            return headless_error(
+                format!(
+                    "Unable to parse headless sprite data provided for generation of '{file_path}': {err}"
+                ),
+                None,
+            );
+        }
     };
     // Pre-load all the DMIs now.
     // This is much faster than doing it as we go (tested!), because sometimes multiple parallel iterators need the DMI.
@@ -114,7 +151,12 @@ pub fn generate_headless(file_path: &str, sprites: &str, flatten: &str) -> Headl
                             ) {
                                 Ok(data) => data,
                                 Err(err) => {
-                                    return headless_error(format!("Headless image {file_path} state {sprite_name} had errors during transformation: {err}"), Some(&error.lock().unwrap()));
+                                    return headless_error(
+                                        format!(
+                                            "Headless image {file_path} state {sprite_name} had errors during transformation: {err}"
+                                        ),
+                                        Some(&error.lock().unwrap()),
+                                    );
                                 }
                             };
                             cache_transformed_images(icon, image_data.clone(), flatten);
@@ -122,12 +164,22 @@ pub fn generate_headless(file_path: &str, sprites: &str, flatten: &str) -> Headl
                         match image_data.images.first() {
                             Some(image) => image.dimensions(),
                             None => {
-                                return headless_error(format!("Headless image {file_path} state {sprite_name} has no images!"), Some(&error.lock().unwrap()));
+                                return headless_error(
+                                    format!(
+                                        "Headless image {file_path} state {sprite_name} has no images!"
+                                    ),
+                                    Some(&error.lock().unwrap()),
+                                );
                             }
                         }
                     }
                     Err(err) => {
-                        return headless_error(format!("Headless image {file_path} state {sprite_name} had errors during parsing: {err}"), Some(&error.lock().unwrap()));
+                        return headless_error(
+                            format!(
+                                "Headless image {file_path} state {sprite_name} had errors during parsing: {err}"
+                            ),
+                            Some(&error.lock().unwrap()),
+                        );
                     }
                 }
             }
@@ -212,12 +264,22 @@ pub fn generate_headless(file_path: &str, sprites: &str, flatten: &str) -> Headl
             zone!("headless_create_file");
             let path = std::path::Path::new(&file_path);
             if let Err(err) = std::fs::create_dir_all(path.parent().unwrap()) {
-                return headless_error(format!("Error creating output file directories for path '{file_path}' during headless generation: {err}"), Some(&error.lock().unwrap()));
+                return headless_error(
+                    format!(
+                        "Error creating output file directories for path '{file_path}' during headless generation: {err}"
+                    ),
+                    Some(&error.lock().unwrap()),
+                );
             };
             let mut output_file = match File::create(path) {
                 Ok(file) => file,
                 Err(err) => {
-                    return headless_error(format!("Error creating output file path '{file_path}' during headless generation: {err}"), Some(&error.lock().unwrap()));
+                    return headless_error(
+                        format!(
+                            "Error creating output file path '{file_path}' during headless generation: {err}"
+                        ),
+                        Some(&error.lock().unwrap()),
+                    );
                 }
             };
             {
@@ -232,7 +294,12 @@ pub fn generate_headless(file_path: &str, sprites: &str, flatten: &str) -> Headl
                         .collect::<Vec<IconState>>(),
                 };
                 if let Err(err) = dmi_icon.save(&mut output_file) {
-                    return headless_error(format!("Error saving DMI for file path '{file_path}' during headless generation: {err}"), Some(&error.lock().unwrap()));
+                    return headless_error(
+                        format!(
+                            "Error saving DMI for file path '{file_path}' during headless generation: {err}"
+                        ),
+                        Some(&error.lock().unwrap()),
+                    );
                 }
             }
         }
@@ -252,7 +319,12 @@ pub fn generate_headless(file_path: &str, sprites: &str, flatten: &str) -> Headl
         {
             zone!("write_headless_png");
             if let Err(err) = final_image.save(file_path) {
-                return headless_error(format!("Error saving PNG for file path '{file_path}' during headless generation: {err}"), Some(&error.lock().unwrap()));
+                return headless_error(
+                    format!(
+                        "Error saving PNG for file path '{file_path}' during headless generation: {err}"
+                    ),
+                    Some(&error.lock().unwrap()),
+                );
             }
         }
     }
@@ -272,6 +344,20 @@ pub fn generate_headless(file_path: &str, sprites: &str, flatten: &str) -> Headl
     }
 }
 
+static CREATED_DIRS: Lazy<DashSet<PathBuf>> = Lazy::new(DashSet::new);
+
+fn ensure_dir_exists(path: PathBuf, error: &Arc<Mutex<Vec<String>>>) {
+    if CREATED_DIRS.insert(path.clone())
+        && let Err(err) = std::fs::create_dir_all(&path)
+    {
+        error.lock().unwrap().push(format!(
+            "Failed to create directory '{}': {}",
+            path.display(),
+            err
+        ));
+    }
+}
+
 pub fn generate_spritesheet(
     file_path: &str,
     spritesheet_name: &str,
@@ -281,6 +367,9 @@ pub fn generate_spritesheet(
     flatten: &str,
 ) -> std::result::Result<String, Error> {
     zone!("generate_spritesheet");
+
+    let base_path = ICON_ROOT.join(file_path);
+
     let hash_icons: bool = hash_icons == "1";
     let generate_dmi: bool = generate_dmi == "1";
     // PNGs cannot be non-flat
@@ -357,14 +446,16 @@ pub fn generate_spritesheet(
     // cache this here so we don't generate the same string 5000 times
     let sprite_name = String::from("N/A, in tree generation stage");
 
-    // Map duplicate transform sets into a tree.
-    // This is beneficial in the case where we have the same base image, and the same set of transforms, but change 1 or 2 things at the end.
-    // We can greatly reduce the amount of RgbaImages created by first finding these.
-    tree_bases
-        .lock()
-        .unwrap()
-        .par_iter()
-        .for_each(|(_, icons)| {
+    {
+        // Map duplicate transform sets into a tree.
+        // This is beneficial in the case where we have the same base image, and the same set of transforms, but change 1 or 2 things at the end.
+        // We can greatly reduce the amount of RgbaImages created by first finding these.
+        let tree_vec: Vec<Vec<(&String, &UniversalIcon)>> = {
+            let guard = tree_bases.lock().unwrap();
+            guard.values().cloned().collect()
+        };
+
+        tree_vec.par_iter().for_each(|icons| {
             zone!("transform_trees");
             let first_icon = match icons.first() {
                 Some((_, icon)) => icon,
@@ -415,6 +506,7 @@ pub fn generate_spritesheet(
                 }
             }
         });
+    }
 
     // Pick the specific icon states out of the DMI, also generating their transforms, build the spritesheet metadata.
     sprites_map.par_iter().for_each(|sprite_entry| {
@@ -472,28 +564,44 @@ pub fn generate_spritesheet(
 
     // all images have been returned now, so continue...
     // Get all the sprites and spew them onto a spritesheet.
-    size_to_icon_objects
-        .lock()
-        .unwrap()
+    let size_entries: Vec<(String, Vec<(&String, &UniversalIcon)>)> = {
+        let guard = size_to_icon_objects.lock().unwrap();
+        guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+    };
+    {
+        zone!("precreate_dirs");
+        let mut parent_dirs = std::collections::HashSet::<std::path::PathBuf>::new();
+
+        for (size_id, _) in &size_entries {
+            let output_path = base_path.join(format!(
+                "{}_{}.{}",
+                spritesheet_name,
+                size_id,
+                if generate_dmi { "dmi" } else { "png" }
+            ));
+            if let Some(parent) = output_path.parent() {
+                parent_dirs.insert(parent.to_path_buf());
+            }
+        }
+
+        for dir in parent_dirs {
+            ensure_dir_exists(dir, &error);
+        }
+    }
+
+    size_entries
         .par_iter()
         .for_each(|(size_id, sprite_entries)| {
             zone!("join_sprites");
-            let file_path = format!(
-                "{file_path}{spritesheet_name}_{size_id}.{}",
+            let file_path = base_path.join(format!(
+                "{}_{}.{}",
+                spritesheet_name,
+                size_id,
                 if generate_dmi { "dmi" } else { "png" }
-            );
-            let size_data: Vec<&str> = size_id.split('x').collect();
-            let base_width = size_data
-                .first()
-                .unwrap()
-                .to_string()
-                .parse::<u32>()
-                .unwrap();
-            let base_height = size_data
-                .last()
-                .unwrap()
-                .to_string()
-                .parse::<u32>()
+            ));
+            let (base_width, base_height) = size_id
+                .split_once('x')
+                .map(|(w, h)| (w.parse::<u32>().unwrap(), h.parse::<u32>().unwrap()))
                 .unwrap();
 
             if generate_dmi {
@@ -509,15 +617,14 @@ pub fn generate_spritesheet(
                     zone!("write_spritesheet_dmi");
                     {
                         zone!("create_file");
-                        let path = std::path::Path::new(&file_path);
-                        if let Err(err) = std::fs::create_dir_all(path.parent().unwrap()) {
-                            error.lock().unwrap().push(err.to_string());
-                            return;
-                        };
-                        let mut output_file = match File::create(path) {
-                            Ok(file) => file,
+                        let mut output_file = match File::create(&file_path) {
+                            Ok(f) => f,
                             Err(err) => {
-                                error.lock().unwrap().push(err.to_string());
+                                error.lock().unwrap().push(format!(
+                                    "Failed to create DMI file '{}': {}",
+                                    file_path.display(),
+                                    err
+                                ));
                                 return;
                             }
                         };
@@ -545,8 +652,12 @@ pub fn generate_spritesheet(
                 };
                 {
                     zone!("write_spritesheet_png");
-                    if let Err(err) = final_image.save(file_path) {
-                        error.lock().unwrap().push(err.to_string());
+                    if let Err(err) = final_image.save(&file_path) {
+                        error.lock().unwrap().push(format!(
+                            "Failed to save PNG file '{}': {}",
+                            file_path.display(),
+                            err
+                        ));
                     }
                 }
             }
@@ -587,7 +698,9 @@ fn create_png_image(
             }
         };
         if image_data.images.len() > 1 {
-            return Err(format!("More than one image (non-flattened) sprite {sprite_name} in PNG spritesheet for icon {icon}!"));
+            return Err(format!(
+                "More than one image (non-flattened) sprite {sprite_name} in PNG spritesheet for icon {icon}!"
+            ));
         }
         let image = image_data.images.first().unwrap();
         let base_x: u32 = base_width * idx as u32;
@@ -672,7 +785,7 @@ fn transform_leaves(
         zone!("do_next_transforms");
         next_transforms
             .into_par_iter()
-            .for_each(|(transform, mut associated_icons)| {
+            .for_each(|(transform, associated_icons)| {
                 let altered_image_data = match transform.apply(image_data.clone(), flatten) {
                     Ok(data) => Arc::new(data),
                     Err(err) => {
@@ -680,31 +793,24 @@ fn transform_leaves(
                         return;
                     }
                 };
-                {
-                    zone!("filter_associated_icons");
-                    associated_icons
-                        .clone()
-                        .into_iter()
-                        .enumerate()
-                        .for_each(|(idx, icon)| {
-                            if icon.transform.len() as u8 == depth + 1
-                                && *icon.transform.last().unwrap() == transform
-                            {
-                                associated_icons.swap_remove(idx);
-                                image_cache::cache_transformed_images(
-                                    icon,
-                                    altered_image_data.clone(),
-                                    flatten,
-                                );
-                            }
-                        });
+                zone!("filter_associated_icons");
+                let (finished, remaining): (Vec<_>, Vec<_>) =
+                    associated_icons.into_iter().partition(|icon| {
+                        icon.transform.len() as u8 == depth + 1
+                            && *icon.transform.last().unwrap() == transform
+                    });
+
+                for icon in finished {
+                    image_cache::cache_transformed_images(
+                        icon,
+                        altered_image_data.clone(),
+                        flatten,
+                    );
                 }
-                if let Err(err) = transform_leaves(
-                    &associated_icons,
-                    altered_image_data.clone(),
-                    depth + 1,
-                    flatten,
-                ) {
+
+                if let Err(err) =
+                    transform_leaves(&remaining, altered_image_data.clone(), depth + 1, flatten)
+                {
                     errors.lock().unwrap().push(err);
                 }
             });
@@ -778,7 +884,11 @@ pub fn cache_valid(
     if dmis.len() > dmi_hashes.len() {
         return Ok(serde_json::to_string::<CacheResult>(&CacheResult {
             result: String::from("0"),
-            fail_reason: format!("Input hash matched, but more DMIs exist than DMI hashes provided ({} DMIs, {} DMI hashes).", dmis.len(), dmi_hashes.len()),
+            fail_reason: format!(
+                "Input hash matched, but more DMIs exist than DMI hashes provided ({} DMIs, {} DMI hashes).",
+                dmis.len(),
+                dmi_hashes.len()
+            ),
         })?);
     }
 
