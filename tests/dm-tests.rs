@@ -1,11 +1,32 @@
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
+use std::sync::OnceLock;
+
+static RUST_G_DM_COPY_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
+
+#[cfg(feature = "dice")]
+#[test]
+fn dice() {
+    run_dm_tests("dice", false);
+}
+
+#[cfg(feature = "ed25519")]
+#[test]
+fn ed25519() {
+    run_dm_tests("ed25519", false);
+}
 
 #[cfg(feature = "git")]
 #[test]
 fn git() {
     run_dm_tests("git", true);
+}
+
+#[cfg(feature = "hash")]
+#[test]
+fn hash() {
+    run_dm_tests("hash", false);
 }
 
 #[cfg(feature = "toml")]
@@ -18,18 +39,6 @@ fn toml() {
 #[test]
 fn url() {
     run_dm_tests("url", false);
-}
-
-#[cfg(feature = "hash")]
-#[test]
-fn hash() {
-    run_dm_tests("hash", false);
-}
-
-#[cfg(feature = "dice")]
-#[test]
-fn dice() {
-    run_dm_tests("dice", false);
 }
 
 #[cfg(feature = "iconforge")]
@@ -122,7 +131,7 @@ fn compile_and_run_dme(name: &str, rust_g_lib_path: &str, chdir: Option<&str>) -
 /**
  * Find the rust_g binary and DMSRC and copy them into the test run directory
  */
-fn find_and_copy_rustg_lib() -> (String, &'static str, &'static str) {
+fn find_and_copy_rustg_lib(test_name: &str) -> (String, &'static str, &'static str) {
     let profile = if cfg!(debug_assertions) {
         "debug"
     } else {
@@ -150,48 +159,47 @@ fn find_and_copy_rustg_lib() -> (String, &'static str, &'static str) {
         }
         Err(err) => panic!("Error accessing source rust_g path! {err}"),
     }
-    let rustg_lib_path = format!("tests/dm/{rustg_lib_fname}");
 
-    match fs::copy(&rustg_lib_source_path, &rustg_lib_path) {
-        Ok(_) => println!("Successfully copied {rustg_lib_fname}"),
-        Err(e) => {
-            println!("Copy failed with error: {:?}", e);
-            println!("Checking if destination already exists...");
+    // use a per-test copy of the shared library to avoid races between parallel tests
+    let test_dir = format!("tests/dm/run_{test_name}");
+    fs::create_dir_all(&test_dir).unwrap();
 
-            if fs::exists(Path::new(&rustg_lib_path)).unwrap_or(false) {
-                println!("Destination file already exists, will use it");
-            } else {
-                panic!(
-                    "Failed to copy {} to {}: {:?}",
-                    rustg_lib_source_path, rustg_lib_path, e
-                );
-            }
-        }
+    let rustg_lib_path = format!("{test_dir}/{rustg_lib_fname}");
+    let _ = fs::remove_file(&rustg_lib_path);
+    if fs::hard_link(&rustg_lib_source_path, &rustg_lib_path).is_err() {
+        fs::copy(&rustg_lib_source_path, &rustg_lib_path).unwrap_or_else(|e| {
+            panic!(
+                "Failed to copy {} to {}: {:?}",
+                rustg_lib_source_path, rustg_lib_path, e
+            );
+        });
     }
 
+    // rust_g.dm goes in tests/dm/ where the .dme files can #include it
     let rustg_dm_path = "tests/dm/rust_g.dm";
     let rustg_dm_source = "target/rust_g.dm";
-    if !fs::exists(Path::new(rustg_dm_source)).unwrap_or(false) {
-        panic!(
-            "rust_g.dm source file does not exist at: {}",
-            rustg_dm_source
-        );
-    }
+    let copy_result = RUST_G_DM_COPY_RESULT.get_or_init(|| {
+        if !fs::exists(Path::new(rustg_dm_source)).unwrap_or(false) {
+            return Err(format!(
+                "rust_g.dm source file does not exist at: {}",
+                rustg_dm_source
+            ));
+        }
 
-    match fs::copy(rustg_dm_source, rustg_dm_path) {
-        Ok(_) => println!("Successfully copied rust_g.dm"),
-        Err(e) => {
-            println!("Copy rust_g.dm failed with error: {:?}", e);
-
-            if fs::exists(Path::new(rustg_dm_path)).unwrap_or(false) {
-                println!("Destination rust_g.dm already exists, will use it");
-            } else {
-                panic!(
+        fs::copy(rustg_dm_source, rustg_dm_path)
+            .map(|_| {
+                println!("Successfully copied rust_g.dm");
+            })
+            .map_err(|e| {
+                format!(
                     "Failed to copy {} to {}: {:?}",
                     rustg_dm_source, rustg_dm_path, e
-                );
-            }
-        }
+                )
+            })
+    });
+
+    if let Err(err) = copy_result {
+        panic!("{err}");
     }
 
     (rustg_lib_path, rustg_lib_fname, rustg_dm_path)
@@ -200,7 +208,7 @@ fn find_and_copy_rustg_lib() -> (String, &'static str, &'static str) {
 fn run_dm_tests(name: &str, use_repo_root: bool) {
     unsafe { std::env::remove_var("RUST_BACKTRACE") };
 
-    let (rustg_lib_path, rustg_lib_fname, rustg_dm_path) = find_and_copy_rustg_lib();
+    let (rustg_lib_path, rustg_lib_fname, _rustg_dm_path) = find_and_copy_rustg_lib(name);
 
     let output = compile_and_run_dme(
         name,
@@ -216,10 +224,6 @@ fn run_dm_tests(name: &str, use_repo_root: bool) {
         },
     );
     runtime_check(&output);
-
-    // Cleanup
-    let _ = std::fs::remove_file(&rustg_lib_path);
-    let _ = std::fs::remove_file(rustg_dm_path);
 }
 
 fn dump(output: &Output) {

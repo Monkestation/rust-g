@@ -77,7 +77,7 @@ cargo build --release --target i686-unknown-linux-gnu
 
 Windows:
 
-If you are using Visual Studio Code, you may use the `CONTROL + SHIFT + B` hotkey and run the `rust: cargo build (win32)` task.
+If you are using Visual Studio Code, you may use the `CONTROL + SHIFT + B` hotkey and run the `rust: cargo release build (win32)` task.
 
 Alternatively:
 ```sh
@@ -92,6 +92,7 @@ You can't use `--all-features` because of conflicting `native_tls` and `rustls_t
 
 The default features are:
 * acreplace: Aho-Corasick string matching and replacement.
+* cave_system_generator: Generates cave systems, like anthills.
 * cellularnoise: Function to generate cellular automata-based noise.
 * dmi: DMI manipulations which are impossible or degraded from within BYOND.
   Mostly used by the asset cache subsystem to improve load times.
@@ -115,6 +116,7 @@ Additional features are:
 * allow_non_32bit: Disables the forced compile errors on non-32bit targets. Only use this if you know exactly what you are doing.
 * batchnoise: Discrete Batched Perlin-like Noise, fast and multi-threaded - sent over once instead of having to query for every tile.
 * dice: Advanced replacement for `roll`, supporting expressive xdy dice notation.
+* ed25519: Ed25519 key generation, public key derivation, signing, and signature verification.
 * poissonnoise: A way to generate a 2D poisson disk distribution ('blue noise'), which is relatively uniform.
 * redis_pubsub: Library for sending and receiving messages through Redis.
 * redis_reliablequeue: Library for using a reliable queue pattern through Redis.
@@ -134,6 +136,16 @@ of the enabled modules. To use rust-g, copy-paste this file into your project.
 
 `rust_g.dm` can be configured by creating a `rust_g.config.dm`. See the comments
 at the top of `rust_g.dm` for details.
+
+## Debugging
+
+### Windows, Visual Studio Code
+
+In order to debug the library, you must have the [Microsoft C/C++ extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools) (`ms-vscode.cpptools`) installed and enabled. Compile the library in development mode, either via pressing `CONTROL + SHIFT + B` and running the `rust: cargo development build (win32)` task, or running the command `cargo build --target i686-pc-windows-msvc` in the terminal. In either way, the debug compiled library will be available in `target/i686-pc-windows-msvc/debug`.
+
+Next, move the compiled debug library to your project. After starting your server, pressing F5 in the rust-g project workspace will open a dialogue window asking you to select a process. Search for the dreamseeker instance and select it; this will attach the debugger to it, allowing you to debug the library.
+
+**Note:** Due to the way the MSVC behaves, sometimes the debugger struggles with matching the lines in the source code to the code running on the server. This seems to be caused by the way rust inlines its macros. If you notice any strange breakpoint behavior on your functions, try clicking on the `byond_fn!` macro and press `ctrl+.`, and select `Inline macro`.
 
 ## Troubleshooting
 

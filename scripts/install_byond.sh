@@ -3,7 +3,9 @@ set -euo pipefail
 
 # Detect OS
 # In GitHub Actions Windows runners with Git Bash, OSTYPE is "msys"
-if [[ "$OSTYPE" == "msys"* || "$OSTYPE" == "win32" ]]; then
+# On Windows 2025+ runners, bash may resolve to WSL where OSTYPE is "linux-gnu",
+# but OS=Windows_NT is still inherited from the Windows environment.
+if [[ "$OSTYPE" == "msys"* || "$OSTYPE" == "win32" || "${OS:-}" == "Windows_NT" ]]; then
     IS_WINDOWS=1
     BYOND_SUFFIX=""
 else
@@ -20,7 +22,7 @@ else
     mkdir -p "$HOME/BYOND"
     cd "$HOME/BYOND"
 
-    if ! curl --connect-timeout 2 --max-time 8 "https://spacestation13.github.io/byond-builds/${BYOND_MAJOR}/${BYOND_MAJOR}.${BYOND_MINOR}_byond${BYOND_SUFFIX}.zip" -o byond.zip -A "GitHub Actions/1.0"; then
+    if ! curl --connect-timeout 2 --max-time 8 "https://byond-builds.dm-lang.org/${BYOND_MAJOR}/${BYOND_MAJOR}.${BYOND_MINOR}_byond${BYOND_SUFFIX}.zip" -o byond.zip -A "GitHub Actions/1.0"; then
         echo "Mirror download failed, falling back to byond.com"
         if ! curl --connect-timeout 2 --max-time 8 "http://www.byond.com/download/build/${BYOND_MAJOR}/${BYOND_MAJOR}.${BYOND_MINOR}_byond${BYOND_SUFFIX}.zip" -o byond.zip -A "GitHub Actions/1.0"; then
             echo "BYOND download failed too :("
