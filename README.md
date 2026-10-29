@@ -92,6 +92,7 @@ You can't use `--all-features` because of conflicting `native_tls` and `rustls_t
 
 The default features are:
 * acreplace: Aho-Corasick string matching and replacement.
+* binary_space_partition: Splits an area into evenly spread rooms, for procedurally generated maps.
 * cave_system_generator: Generates cave systems, like anthills.
 * cellularnoise: Function to generate cellular automata-based noise.
 * dmi: DMI manipulations which are impossible or degraded from within BYOND.
@@ -105,6 +106,7 @@ The default features are:
 * log: Faster log output.
 * noise: 2d Perlin noise.
 * pathfinder: An a* pathfinder used for finding the shortest path in a static node map. Not to be used for a non-static map.
+* random_room_placement: Scatters non overlapping rooms the size of maint ruins over an area, for procedurally generated maps.
 * sound_len: A mostly codec-agnostic library for reading the duration of an audio file.
 * sql: Asynchronous MySQL/MariaDB client library.
   * There are also two sub-features: `native_tls` and `rustls_tls`. `rustls_tls` is a default feature, while the former is not.
