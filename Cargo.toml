@@ -87,6 +87,7 @@ default = [
     "poissonnoise",
     "acreplace",
     "batchnoise",
+    "binary_space_partition",
     "cave_system_generator",
     "cellularnoise",
     "dmi",
@@ -99,6 +100,7 @@ default = [
     "log",
     "noise",
     "pathfinder",
+    "random_room_placement",
     "rustls_tls",
     "sanitize",
     "sound_len",
@@ -106,12 +108,13 @@ default = [
     "time",
     "toml",
     "url",
-    "uuid"
+    "uuid",
 ]
 
 all = [
     "acreplace",
     "batchnoise",
+    "binary_space_partition",
     "cave_system_generator",
     "cellularnoise",
     "dmi",
@@ -134,6 +137,7 @@ all = [
     "url",
     "uuid",
     "pathfinder",
+    "random_room_placement",
     "poissonnoise",
     "redis_pubsub",
     "redis_reliablequeue",
@@ -144,6 +148,7 @@ all = [
 # default features
 acreplace = ["aho-corasick"]
 batchnoise = ["dbpnoise"]
+binary_space_partition = ["rand", "serde", "serde_json"]
 cave_system_generator = ["rand", "rayon", "serde", "serde_json"]
 cellularnoise = ["rand", "rayon"]
 dmi = ["dep:dmi", "png", "image", "qrcode", "serde_repr"]
@@ -168,6 +173,7 @@ http = ["ureq", "serde", "serde_json", "once_cell", "jobs"]
 iconforge = ["dep:iconforge"]
 json = ["serde", "serde_json"]
 log = ["chrono"]
+random_room_placement = ["rand", "serde", "serde_json"]
 sanitize = ["ammonia", "serde_json"]
 sound_len = ["symphonia"]
 sql = ["mysql", "serde", "serde_json", "once_cell", "dashmap", "jobs"]
